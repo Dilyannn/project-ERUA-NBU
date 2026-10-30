@@ -3,7 +3,7 @@ name: Branch source policy
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited]
-    branches: [main, staging]
+    branches: [main]
 
 permissions: {}
 
@@ -30,7 +30,7 @@ jobs:
           fi
 
           case "$BASE:$HEAD" in
-            main:staging|staging:dev)
+            main:dev)
               echo "Allowed: $HEAD -> $BASE"
               ;;
             *)
