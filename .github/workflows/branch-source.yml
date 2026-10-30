@@ -1,0 +1,40 @@
+name: Branch source policy
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+    branches: [main, staging]
+
+permissions: {}
+
+concurrency:
+  group: branch-source-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-source:
+    name: Validate PR source
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check source and target
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "The source branch must belong to this repository."
+            exit 1
+          fi
+
+          case "$BASE:$HEAD" in
+            main:staging|staging:dev)
+              echo "Allowed: $HEAD -> $BASE"
+              ;;
+            *)
+              echo "Not allowed: $HEAD -> $BASE"
+              exit 1
+              ;;
+          esac
