@@ -22,6 +22,7 @@ transfuse = [
 
 [project.scripts]
 erua-transfuse = "image_model.transfuse:main"
+erua-score-masks = "image_model.evaluation:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
