@@ -1,0 +1,33 @@
+name: Pull request commit count
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+    branches: [main, dev]
+
+permissions: {}
+
+concurrency:
+  group: pr-commit-count-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commit-count:
+    name: Require two PR commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Count commits in the pull request
+        shell: bash
+        run: |
+          if ! count=$(jq -er '.pull_request.commits | select(type == "number")' "$GITHUB_EVENT_PATH"); then
+            echo "::error::The pull request event did not provide a commit count."
+            exit 1
+          fi
+
+          if (( count < 2 )); then
+            echo "::error::This pull request contains $count commit(s). At least two are required."
+            exit 1
+          fi
+
+          echo "This pull request contains $count commits."

@@ -6,6 +6,21 @@ This project evaluates methods for segmenting exposed sclera in ordinary RGB eye
 - `docs/model-selection.md` records the sclera segmentation baseline, model candidates, and evaluation plan.
 - `.github/workflows/` holds pull request policy checks.
 
+## Local setup
+
+Use Python 3.12. From the repository root, create an isolated environment and install the local package in editable mode.
+
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+python -c "import image_model"
+```
+
+Runtime dependencies and the inference command will be introduced with the TransFuse baseline.
+
+## Contributing
+
 Open feature pull requests against `dev`. Promote changes to `main` through a pull request from this repository's `dev` branch.
 
 Keep local datasets, downloaded weights, and experiment outputs out of Git. Record dataset and checkpoint versions alongside evaluation results.
