@@ -17,7 +17,7 @@ python -m pip install -e .
 python -c "import image_model"
 ```
 
-Runtime dependencies and the inference command will be introduced with the TransFuse baseline.
+For the TransFuse command, see [baseline setup and crop format](docs/transfuse-baseline.md).
 
 ## Contributing
 

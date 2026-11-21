@@ -9,5 +9,19 @@ description = "Sclera segmentation experiments for project-ERUA-NBU"
 readme = "README.md"
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+transfuse = [
+    "einops",
+    "numpy",
+    "opencv-python-headless>=4.8",
+    "Pillow",
+    "timm",
+    "torch>=2.6",
+    "torchvision",
+]
+
+[project.scripts]
+erua-transfuse = "image_model.transfuse:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
