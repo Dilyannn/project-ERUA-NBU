@@ -1,18 +1,26 @@
-# project-CSCB532
+# project-ERUA-NBU
 
-A web application with a React and TypeScript client. The server stack has not been chosen yet.
+This project evaluates methods for segmenting exposed sclera in ordinary RGB eye photographs across a range of ocular pigmentation. It produces masks in the source image's coordinates and preserves the original RGB values for later analysis.
 
-- `client/`: frontend application
-- `server/`: reserved for the backend
-- `docs/`: project documentation
-- `.claude/`: Claude configuration
+- `src/image_model/` holds the Python model and evaluation code as it is developed.
+- `docs/model-selection.md` records the sclera segmentation baseline, model candidates, and evaluation plan.
+- `.github/workflows/` holds pull request policy checks.
 
-## Run the client
+## Local setup
 
-Use Node.js 20.19+ or 22.12+, then run:
+Use Python 3.12. From the repository root, create an isolated environment and install the local package in editable mode.
 
 ```sh
-cd client
-npm install
-npm run dev
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+python -c "import image_model"
 ```
+
+Runtime dependencies and the inference command will be introduced with the TransFuse baseline.
+
+## Contributing
+
+Open feature pull requests against `dev`. Promote changes to `main` through a pull request from this repository's `dev` branch.
+
+Keep local datasets, downloaded weights, and experiment outputs out of Git. Record dataset and checkpoint versions alongside evaluation results.
