@@ -1,18 +1,11 @@
-# project-CSCB532
+# project-ERUA-NBU
 
-A web application with a React and TypeScript client. The server stack has not been chosen yet.
+This project evaluates methods for segmenting exposed sclera in ordinary RGB eye photographs across a range of ocular pigmentation. It produces masks in the source image's coordinates and preserves the original RGB values for later analysis.
 
-- `client/`: frontend application
-- `server/`: reserved for the backend
-- `docs/`: project documentation
-- `.claude/`: Claude configuration
+- `src/image_model/` holds the Python model and evaluation code as it is developed.
+- `docs/model-selection.md` records the sclera segmentation baseline, model candidates, and evaluation plan.
+- `.github/workflows/` holds pull request policy checks.
 
-## Run the client
+Open feature pull requests against `dev`. Promote changes to `main` through a pull request from this repository's `dev` branch.
 
-Use Node.js 20.19+ or 22.12+, then run:
-
-```sh
-cd client
-npm install
-npm run dev
-```
+Keep local datasets, downloaded weights, and experiment outputs out of Git. Record dataset and checkpoint versions alongside evaluation results.
