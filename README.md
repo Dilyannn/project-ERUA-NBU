@@ -4,6 +4,7 @@ This project evaluates methods for segmenting exposed sclera in ordinary RGB eye
 
 - `src/image_model/` holds the Python model and evaluation code as it is developed.
 - `docs/model-selection.md` records the sclera segmentation baseline, model candidates, and evaluation plan.
+- `docs/evaluation-panel.md` defines the reference masks and subject-separated evaluation protocol.
 - `.github/workflows/` holds pull request policy checks.
 
 ## Local setup
