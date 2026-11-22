@@ -8,6 +8,12 @@ Use the released [Sclera-TransFuse](https://github.com/lhqqq/Sclera-TransFuse) `
 
 Freeze the existing post-processing as the control. Threshold at 0.125, retain up to two principal scleral components, fill enclosed holes no larger than 2% of each component, and apply component-wise 25 × 13 elliptical closing. Map the binary mask back with nearest-neighbor interpolation. Save the probability map, raw and cleaned binary masks, and a separate overlay. Measure the effect of each post-processing step on the validation split before changing it.
 
+## Add a model to the shared pipeline
+
+`image_model.segmentation` handles the crop manifest, eye-opening padding, source-coordinate projection, and output files. A model prepares a predictor once per run. The predictor takes an oriented RGB crop and returns a 2D floating-point sclera probability map in [0, 1] covering the entire crop. Its output grid can differ from TransFuse's 384 × 384 grid. If model preprocessing pads or crops the input, remove that padding or restore the crop extent before returning the probabilities.
+
+Keep checkpoint loading, preprocessing, and conversion to sclera probabilities inside each model's module. Use the same image-space outputs and reference masks for evaluation. Report raw masks for the model comparison and report model-specific cleanup separately, with settings chosen on the validation split.
+
 ## Compare segmentation models
 
 | Candidate | Role |
