@@ -6,7 +6,16 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from image_model.transfuse import Baseline, Sample, clean_mask, load_images, read_manifest, write_outputs
+from image_model.segmentation import (
+    MaskSettings,
+    Sample,
+    clean_mask,
+    load_images,
+    read_manifest,
+    run_segmentation,
+    write_outputs,
+)
+from image_model.transfuse import SEMINAR_MASK_SETTINGS
 
 
 class TransFuseGeometryTest(unittest.TestCase):
@@ -33,7 +42,7 @@ class TransFuseGeometryTest(unittest.TestCase):
             probability = np.full((384, 384), 0.05, dtype=np.float32)
             probability[64:256, 96:288] = 0.8
             output = root / "results"
-            write_outputs(output, source, box, probability)
+            write_outputs(output, source, box, probability, SEMINAR_MASK_SETTINGS)
 
             expected_mask = np.zeros((12, 16), dtype=np.uint8)
             expected_mask[3:6, 5:9] = 255
@@ -83,8 +92,65 @@ class TransFuseGeometryTest(unittest.TestCase):
         raw[16:21, 16:21] = 0
         raw[35:55, 35:55] = 1
         raw[59:62, 59:62] = 1
-        cleaned = clean_mask(raw, Baseline(closing_kernel=(1, 1)))
+        cleaned = clean_mask(raw, MaskSettings(0.125, 2, 0.02, (1, 1)))
         self.assertEqual(cleaned[9, 9], 1)
         self.assertEqual(cleaned[18, 18], 0)
         self.assertEqual(cleaned[40, 40], 1)
         self.assertEqual(cleaned[60, 60], 0)
+
+    def test_shared_runner_accepts_a_non_square_probability_map(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (12, 8)).save(root / "source.png")
+            manifest = root / "crops.json"
+            manifest.write_text(json.dumps({
+                "orientation": "exif-transposed",
+                "samples": [{"id": "eye", "source": "source.png", "box": [2, 1, 8, 5]}],
+            }), encoding="utf-8")
+            probability = np.array([[0, 0.75, 0], [0, 0.75, 0]], dtype=np.float32)
+            prepared = []
+
+            def predict(crop):
+                self.assertEqual((crop.mode, crop.size), ("RGB", (6, 4)))
+                return probability
+
+            def prepare():
+                prepared.append(True)
+                return predict, {"model": "fixture"}
+
+            settings = MaskSettings(0.5, 2, 0, (1, 1))
+            output = root / "results"
+            run_segmentation(manifest, output, prepare, settings)
+            metadata = json.loads((output / "run.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["model"], "fixture")
+            self.assertEqual(metadata["samples"], [{"id": "eye", "box": [2, 1, 8, 5]}])
+            expected = np.zeros((8, 12), dtype=np.float32)
+            expected[1:5, 4:6] = 0.75
+            np.testing.assert_array_equal(np.load(output / "eye" / "probability.npy"), expected)
+            with self.assertRaises(FileExistsError):
+                run_segmentation(manifest, output, prepare, settings)
+            self.assertEqual(prepared, [True])
+
+    def test_shared_runner_rejects_invalid_predictions_without_publishing_partial_results(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (8, 8)).save(root / "source.png")
+            manifest = root / "crops.json"
+            manifest.write_text(json.dumps({
+                "orientation": "exif-transposed",
+                "samples": [
+                    {"id": name, "source": "source.png", "box": [0, 0, 8, 8]}
+                    for name in ("first", "second")
+                ],
+            }), encoding="utf-8")
+            probabilities = iter([
+                np.full((2, 3), 0.5, dtype=np.float32),
+                np.full((2, 3), 1.1, dtype=np.float32),
+            ])
+            output = root / "results"
+            with self.assertRaisesRegex(ValueError, "probability map"):
+                run_segmentation(
+                    manifest, output, lambda: (lambda crop: next(probabilities), {}),
+                    MaskSettings(0.5, 2, 0, (1, 1)),
+                )
+            self.assertFalse(output.exists())
