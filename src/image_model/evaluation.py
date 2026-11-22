@@ -10,6 +10,10 @@ import cv2
 import numpy as np
 from PIL import Image
 
+SCLERA_REGIONS = ("peri_limbal_sclera", "pigmented_sclera")
+EXCLUSION_REGIONS = ("skin", "eyelid", "caruncle")
+REGIONS = SCLERA_REGIONS + EXCLUSION_REGIONS
+
 
 def read_mask(path: Path) -> np.ndarray:
     with Image.open(path) as image:
@@ -60,17 +64,43 @@ def mask_scores(predicted: np.ndarray, reference: np.ndarray, tolerance: float) 
     }
 
 
-def score_run(results: Path, references: Path, tolerance: float) -> list[dict[str, str | float | int]]:
+def validate_region(name: str, region: np.ndarray, reference: np.ndarray) -> None:
+    if region.shape != reference.shape:
+        raise ValueError(f"{name}: region and reference dimensions differ.")
+    allowed = reference if name in SCLERA_REGIONS else ~reference
+    if np.any(region & ~allowed):
+        raise ValueError(f"{name}: region contains pixels outside its allowed reference class.")
+
+
+def region_scores(predicted: np.ndarray, regions: dict[str, np.ndarray | None]) -> dict[str, float | int | None]:
+    scores = {}
+    for name, region in regions.items():
+        pixels = int(np.count_nonzero(region)) if region is not None else 0
+        positive = int(np.count_nonzero(predicted & region)) if region is not None else 0
+        scores[f"{name}_reference_pixels"] = pixels if region is not None else None
+        if name in SCLERA_REGIONS:
+            scores[f"{name}_recall"] = positive / pixels if pixels else None
+        else:
+            scores[f"{name}_false_positive_pixels"] = positive if region is not None else None
+    return scores
+
+
+def score_run(results: Path, references: Path, tolerance: float) -> list[dict[str, str | float | int | None]]:
     with references.open(newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
-        if reader.fieldnames != ["id", "mask"]:
-            raise ValueError("Reference CSV must have id,mask columns.")
+        columns = reader.fieldnames or []
+        if (
+            columns[:2] != ["id", "mask"]
+            or len(set(columns)) != len(columns)
+            or any(name not in REGIONS for name in columns[2:])
+        ):
+            raise ValueError("Reference CSV must start with id,mask and may include known region columns.")
         expected = {}
         for row in reader:
             name, mask = row["id"], row["mask"]
-            if not name or not mask or name in expected or None in row:
+            if not name or not mask or name in expected or None in row or None in row.values():
                 raise ValueError("Each row must contain a unique sample id and a mask path.")
-            expected[name] = references.parent / mask
+            expected[name] = row
 
     data = json.loads((results / "run.json").read_text(encoding="utf-8"))
     names = [sample["id"] for sample in data["samples"]]
@@ -81,12 +111,21 @@ def score_run(results: Path, references: Path, tolerance: float) -> list[dict[st
     for name in names:
         if Path(name).name != name or name in {".", ".."}:
             raise ValueError(f"Invalid sample id: {name!r}.")
-        reference = read_mask(expected[name])
+        record = expected[name]
+        reference = read_mask(references.parent / record["mask"])
+        regions = {}
+        for region_name in columns[2:]:
+            path = record[region_name]
+            region = read_mask(references.parent / path) if path else None
+            if region is not None:
+                validate_region(region_name, region, reference)
+            regions[region_name] = region
         for variant in ("raw", "cleaned"):
             predicted = read_mask(results / name / f"{variant}-mask.png")
             rows.append({
                 "id": name, "mask": variant, "tolerance_px": tolerance,
                 **mask_scores(predicted, reference, tolerance),
+                **region_scores(predicted, regions),
             })
     return rows
 
