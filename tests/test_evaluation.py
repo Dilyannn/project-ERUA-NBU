@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from image_model.evaluation import mask_scores
+from image_model.evaluation import mask_scores, region_scores, validate_region
 
 
 class MaskScoresTest(unittest.TestCase):
@@ -25,3 +25,22 @@ class MaskScoresTest(unittest.TestCase):
         self.assertEqual(mask_scores(~empty, empty, tolerance=3)["boundary_f1"], 0.0)
         with self.assertRaisesRegex(ValueError, "dimensions differ"):
             mask_scores(empty, empty[:2], tolerance=3)
+
+    def test_region_metrics_distinguish_missing_and_empty_labels(self):
+        reference = np.array([[True, True], [False, False]])
+        predicted = np.array([[True, False], [True, False]])
+        skin = ~reference
+        validate_region("peri_limbal_sclera", reference, reference)
+        validate_region("skin", skin, reference)
+        scores = region_scores(predicted, {
+            "peri_limbal_sclera": reference,
+            "pigmented_sclera": np.zeros_like(reference),
+            "skin": skin,
+            "eyelid": None,
+        })
+        self.assertEqual(scores["peri_limbal_sclera_recall"], 0.5)
+        self.assertIsNone(scores["pigmented_sclera_recall"])
+        self.assertEqual(scores["skin_false_positive_pixels"], 1)
+        self.assertIsNone(scores["eyelid_false_positive_pixels"])
+        with self.assertRaisesRegex(ValueError, "outside"):
+            validate_region("caruncle", reference, reference)
