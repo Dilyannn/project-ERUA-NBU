@@ -13,12 +13,14 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
+
+from .ubiris_importer import Inventory
 
 
 SCHEMA_VERSION = "1.0"
 SPLITS = ("train", "validation", "test")
-SPLIT_ALGORITHM = "subject-greedy-v1"
+SPLIT_ALGORITHM = "subject-greedy-v2"
 # Provisional target proportions; confirm these with the ERUA team before use.
 DEFAULT_SPLIT_RATIOS = {"train": 0.70, "validation": 0.15, "test": 0.15}
 REQUIRED_RECORD_FIELDS = (
@@ -105,7 +107,7 @@ class AuditReport:
                 f"  exact duplicate groups crossing splits: {self.exact_duplicate_leakage_groups}",
                 f"  image overlaps: {self.image_overlap_count}",
                 f"  subject overlaps: {self.subject_overlap_count}",
-                f"  result: {'PASS' if self.passed else 'FAIL'}",
+                f"  leakage-only result: {'PASS' if self.passed else 'FAIL'}",
                 f"  seed: {self.seed if self.seed is not None else 'unavailable'}",
                 f"  split ratios: {json.dumps(self.split_ratios, sort_keys=True) if self.split_ratios else 'unavailable'}",
             ]
@@ -138,8 +140,10 @@ def analyze_original_split_dirs(
                 raise ValueError
         except (OSError, TypeError, ValueError):
             raise ValueError(f"Original split directory is unavailable: {split}") from None
+        if (root / "image").is_dir():
+            root = root / "image"
         names = [
-            path.name
+            path.stem.casefold()
             for path in root.rglob("*")
             if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES
         ]
@@ -215,10 +219,14 @@ def generate_splits(
     split_priority = sorted(SPLITS, key=lambda split: (tie_hash(f"split:{split}"), split))
     split_rank = {split: rank for rank, split in enumerate(split_priority)}
     assignments: dict[str, str] = {}
-    for subject in subjects:
+    if len(subjects) < len(SPLITS):
+        raise ManifestError("At least three independent subject groups are required")
+    for index, subject in enumerate(subjects):
         size = len(groups[subject])
+        empty = [name for name in SPLITS if image_counts[name] == 0]
+        candidates = empty if len(subjects) - index == len(empty) else SPLITS
         split = min(
-            SPLITS,
+            candidates,
             key=lambda candidate: (
                 sum(
                     ((image_counts[name] + (size if name == candidate else 0) - targets[name]) / total_images) ** 2
@@ -412,7 +420,7 @@ def _inspect_manifest(
     root: Path | None = None
     if base_dir is not None:
         try:
-            root = Path(base_dir)
+            root = Path(base_dir).resolve(strict=True)
         except (OSError, TypeError, ValueError):
             issues.append("Manifest base directory is invalid")
 
@@ -456,8 +464,12 @@ def _inspect_manifest(
                 if "\x00" in raw_path:
                     raise ValueError
                 path = Path(raw_path)
-                if root is not None and not path.is_absolute():
-                    path = root / path
+                if root is not None:
+                    if path.anchor or ".." in path.parts:
+                        raise ValueError
+                    path = (root / path).resolve()
+                    if not path.is_relative_to(root):
+                        raise ValueError
                 if not path.is_file():
                     issues.append("Manifest references a missing image or mask file")
                 else:
@@ -482,6 +494,11 @@ def _inspect_manifest(
         if image_path is not None:
             try:
                 digest = _sha256(image_path)
+                if "image_sha256" in row and digest != row["image_sha256"]:
+                    issues.append("Image hash differs from inventory")
+                if "mask_sha256" in row and "mask_path" in resolved_paths:
+                    if _sha256(resolved_paths["mask_path"]) != row["mask_sha256"]:
+                        issues.append("Mask hash differs from inventory")
             except (OSError, ValueError):
                 issues.append("Image file could not be hashed")
         rows.append(row)
@@ -500,3 +517,52 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def inventory_split(inventory: Inventory, mapping: Mapping[str, str], *,
+                    mapping_status: str, seed: int = 42,
+                    ratios: Mapping[str, float] | None = None) -> dict[str, Any]:
+    """Build a reproducible split from a fresh inventory and an external mapping.
+
+    Verified status is an explicit custodian assertion. Keep the evidence private.
+    """
+    if mapping_status not in {"verified", "provisional"}:
+        raise ManifestError("Declare mapping status")
+    if set(mapping) != {pair.id for pair in inventory.samples}:
+        raise ManifestError("Mapping must cover exactly the eligible inventory")
+    records = []
+    for pair in inventory.samples:
+        records.append(dict(record_id=pair.id, image_id=pair.id, subject_id=mapping[pair.id],
+                            image_path=pair.image.as_posix(), mask_path=pair.mask.as_posix(),
+                            image_sha256=pair.image_sha256, mask_sha256=pair.mask_sha256,
+                            width=pair.width, height=pair.height))
+    manifest = generate_splits({"schema_version": SCHEMA_VERSION, "records": records},
+                               base_dir=inventory.root, seed=seed, ratios=ratios)
+    manifest["mapping_status"] = mapping_status
+    payload = json.dumps(manifest, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    manifest["snapshot_sha256"] = hashlib.sha256(payload.encode()).hexdigest()
+    return manifest
+
+
+def validate_snapshot(manifest: Mapping[str, Any], inventory: Inventory, mapping: Mapping[str, str],
+                    *, mapping_status: str, seed: int = 42,
+                    ratios: Mapping[str, float] | None = None) -> AuditReport:
+    """Validate against independent trusted inputs and configuration before freezing."""
+    expected = inventory_split(inventory, mapping, mapping_status=mapping_status,
+                               seed=seed, ratios=ratios)
+    if json.dumps(expected, sort_keys=True) != json.dumps(manifest, sort_keys=True):
+        raise ManifestError("Manifest differs from regenerated trusted inventory split")
+    report = audit_manifest(expected, base_dir=inventory.root)
+    if not report.passed:
+        raise ManifestError("Snapshot failed file integrity or leakage checks")
+    return report
+
+
+def validate_frozen(manifest: Mapping[str, Any], inventory: Inventory, mapping: Mapping[str, str],
+                    *, mapping_status: str, seed: int = 42,
+                    ratios: Mapping[str, float] | None = None) -> AuditReport:
+    """Require independently verified mapping before accepting a final partition."""
+    if mapping_status != "verified":
+        raise ManifestError("Freezing requires a verified external subject mapping")
+    return validate_snapshot(manifest, inventory, mapping, mapping_status=mapping_status,
+                             seed=seed, ratios=ratios)
