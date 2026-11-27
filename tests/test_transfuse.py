@@ -154,3 +154,25 @@ class TransFuseGeometryTest(unittest.TestCase):
                     MaskSettings(0.5, 2, 0, (1, 1)),
                 )
             self.assertFalse(output.exists())
+            self.assertEqual(set(root.iterdir()), {manifest, root / "source.png"})
+
+    def test_publication_preserves_destination_created_during_prediction(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.png"
+            Image.new("RGB", (8, 8)).save(source)
+            manifest = root / "crops.json"
+            manifest.write_text(json.dumps({
+                "orientation": "exif-transposed",
+                "samples": [{"id": "eye", "source": source.name, "box": [0, 0, 8, 8]}],
+            }), encoding="utf-8")
+            output = root / "results"
+
+            def predict(crop):
+                output.mkdir()
+                return np.zeros((2, 2), dtype=np.float32)
+
+            with self.assertRaises(FileExistsError):
+                run_segmentation(manifest, output, lambda: (predict, {}), SEMINAR_MASK_SETTINGS)
+            self.assertEqual(list(output.iterdir()), [])
+            self.assertEqual(set(root.iterdir()), {source, manifest, output})
