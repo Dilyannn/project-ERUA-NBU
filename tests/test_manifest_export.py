@@ -1,11 +1,15 @@
+import errno
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
 
+from image_model._publication import publish_directory
 from image_model.datasets.manifest_export import export_manifests
 from image_model.datasets.ubiris_importer import inspect_pairs
 from image_model.evaluation import score_run
@@ -57,9 +61,49 @@ class ExportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed"):
             export_manifests(self.inventory, ["eye"], {"eye": [0, 0, 1, 1]}, self.dest)
 
-    def test_csv_write_failure_cleans_staging(self):
-        from unittest.mock import patch
+    def test_existing_empty_destination(self):
+        self.dest.mkdir()
+        identity = self.dest.stat()
+        with self.assertRaises(ValueError):
+            export_manifests(self.inventory, ["eye"], {"eye": [0, 0, 10, 8]}, self.dest)
+        self.assertTrue(os.path.samestat(identity, self.dest.stat()))
+        self.assertEqual(list(self.dest.iterdir()), [])
 
+    def test_destination_created_at_publication(self):
+        for populated in (False, True):
+            with self.subTest(populated=populated):
+                destination = self.base / str(populated)
+                before = set(self.base.iterdir())
+                marker = destination / "competitor"
+                def compete(stage, target):
+                    self.assertEqual({p.name for p in stage.iterdir()}, {"crops.json", "references.csv"})
+                    target.mkdir()
+                    if populated:
+                        marker.write_bytes(b"keep")
+                    self.identity = target.stat()
+                    publish_directory(stage, target)
+
+                with patch("image_model.datasets.manifest_export.publish_directory", compete):
+                    with self.assertRaises(FileExistsError):
+                        export_manifests(self.inventory, ["eye"], {"eye": [0, 0, 10, 8]}, destination)
+                self.assertTrue(os.path.samestat(self.identity, destination.stat()))
+                self.assertEqual(set(destination.iterdir()), {marker} if populated else set())
+                if populated:
+                    self.assertEqual(marker.read_bytes(), b"keep")
+                self.assertEqual(set(self.base.iterdir()), before | {destination})
+
+    def test_unavailable_exclusive_rename_cleans_stage(self):
+        before = set(self.base.iterdir())
+        with patch("image_model._publication.os") as platform_os, \
+             patch("image_model._publication.sys.platform", "linux"), \
+             patch("image_model._publication.ctypes.CDLL", return_value=object()):
+            platform_os.fsencode = os.fsencode
+            with self.assertRaises(OSError) as error:
+                export_manifests(self.inventory, ["eye"], {"eye": [0, 0, 10, 8]}, self.dest)
+        self.assertEqual(error.exception.errno, errno.ENOTSUP)
+        self.assertEqual(set(self.base.iterdir()), before)
+
+    def test_csv_write_failure_cleans_staging(self):
         before = set(self.base.iterdir())
         with patch("image_model.datasets.manifest_export.csv.writer", side_effect=OSError("disk error")):
             with self.assertRaisesRegex(OSError, "disk error"):

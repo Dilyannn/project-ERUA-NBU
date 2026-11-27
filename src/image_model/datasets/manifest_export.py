@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from image_model._publication import publish_directory
 from image_model.segmentation import ORIENTATION, load_images, read_manifest, sha256
 from .ubiris_importer import Inventory
 
@@ -20,7 +21,9 @@ def export_manifests(inventory: Inventory, ids: Iterable[str], boxes: Mapping[st
     coordinates [left, top, right, bottom), before the baseline adds padding.
     The destination's parent must exist on the same drive as the source files.
     """
-    destination = destination.resolve()
+    if destination.is_symlink():
+        raise ValueError("Choose a new output directory outside the dataset.")
+    destination = destination.parent.resolve() / destination.name
     if destination.is_relative_to(inventory.root) or destination.exists():
         raise ValueError("Choose a new output directory outside the dataset.")
     if isinstance(ids, str):
@@ -60,5 +63,5 @@ def export_manifests(inventory: Inventory, ids: Iterable[str], boxes: Mapping[st
             writer = csv.writer(file)
             writer.writerow(("id", "mask"))
             writer.writerows(references)
-        stage.rename(destination)
+        publish_directory(stage, destination)
     return destination / "crops.json", destination / "references.csv"
