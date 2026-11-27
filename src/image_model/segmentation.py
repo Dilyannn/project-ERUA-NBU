@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
@@ -196,6 +197,10 @@ def run_segmentation(
             write_outputs(destination / sample.name, source, box, predict(crop), settings)
             recorded_samples.append({"id": sample.name, "box": box})
         (destination / "run.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        if os.name == "nt":
+            # Windows rename atomically fails if another writer already published.
+            destination.rename(output)
+            return
         output.mkdir()
         try:
             destination.replace(output)
